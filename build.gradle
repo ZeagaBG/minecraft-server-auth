@@ -1,0 +1,44 @@
+plugins {
+    id 'java'
+}
+
+group = 'community.auth'
+version = '0.1.0'
+
+repositories {
+    mavenCentral()
+    maven { url = 'https://repo.papermc.io/repository/maven-public/' }
+}
+
+dependencies {
+    compileOnly 'io.papermc.paper:paper-api:26.3.build.175-stable'
+    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
+    implementation 'net.dv8tion:JDA:6.7.0'
+}
+
+java {
+    sourceCompatibility = JavaVersion.toVersion(25)
+    targetCompatibility = JavaVersion.toVersion(25)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 25
+}
+
+processResources {
+    def properties = [version: project.version]
+    inputs.properties(properties)
+    filteringCharset = 'UTF-8'
+    filesMatching('plugin.yml') {
+        expand(properties)
+    }
+}
+
+jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'module-info.class'
+}

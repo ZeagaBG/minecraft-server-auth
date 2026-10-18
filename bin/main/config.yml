@@ -1,0 +1,35 @@
+# Start disabled so an incomplete setup cannot accidentally lock players out.
+enabled: false
+
+discord:
+  # Create an application/bot in the Discord Developer Portal and invite it to your guild.
+  guild-id: "1543636647739007016"
+  # The bot token is read from this environment variable and is never stored in this file.
+  token-environment-variable: "MTU2MTQwNDAzODY4NjE4NzU5Mg.G_csx6.zMUgMkU1bih50urwu1AsmlKqVSYOcM5ecjPOzw"
+  eligibility:
+    # Set true only if every guild member should qualify.
+    allow-any-guild-member: false
+    # A member needs at least one listed role when this list is non-empty.
+    required-any-role-ids: []
+    # A member must have every listed role.
+    required-all-role-ids: ["1549166157737492673"]
+
+verification:
+  code-lifetime-seconds: 300
+  max-attempts-per-window: 8
+  attempt-window-seconds: 120
+  # First-time Minecraft identity links wait for a trusted moderator's approval.
+  require-first-link-approval: true
+  # Recheck online players' Discord eligibility at this interval.
+  eligibility-recheck-seconds: 60
+  # Disconnect players who never finish authentication.
+  authentication-timeout-seconds: 180
+  max-unauthenticated-players: 8
+
+messages:
+  restricted: "Verify through Discord, then run /auth <code> in Minecraft."
+  code-issued: "Your code is ready. Enter it with /auth <code>."
+  verified: "Discord verified. You may now play."
+  pending-approval: "Your first Minecraft link is waiting for moderator approval."
+  denied: "That code is invalid, expired, or your Discord account is not eligible."
+  unavailable: "Discord verification is temporarily unavailable. Try again shortly."

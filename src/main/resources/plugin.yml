@@ -1,0 +1,15 @@
+name: CommunityAuthGate
+version: '${version}'
+main: community.auth.gate.CommunityAuthGate
+api-version: '26.3'
+description: Discord-backed session admission for an offline-mode Paper server.
+load: POSTWORLD
+softdepend: [floodgate]
+commands:
+  auth:
+    description: Verify a Minecraft session or manage first-time identity links.
+    usage: /auth <code|pending|approve|deny|unlink>
+permissions:
+  communityauth.admin:
+    description: Review and manage first-time Minecraft identity links.
+    default: op
