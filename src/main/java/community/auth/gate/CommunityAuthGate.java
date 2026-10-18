@@ -4,12 +4,14 @@ import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginCommand;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
+import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,6 +33,7 @@ public final class CommunityAuthGate extends JavaPlugin {
     private final Map<UUID, String> authorizedSessions = new ConcurrentHashMap<>();
     private final Map<UUID, String> pendingApprovalSessions = new ConcurrentHashMap<>();
     private final Map<UUID, Long> sessionStartedAt = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> eligibilityLastSuccess = new ConcurrentHashMap<>();
     private final Map<UUID, AttemptWindow> attemptWindows = new ConcurrentHashMap<>();
     private AuthStore store;
     private DiscordAuthService discord;
@@ -45,7 +48,15 @@ public final class CommunityAuthGate extends JavaPlugin {
         saveDefaultConfig();
         maxUnauthenticatedPlayers = Math.max(1,
                 getConfig().getInt("verification.max-unauthenticated-players", 8));
-        store = new AuthStore(this);
+        try {
+            store = new AuthStore(this);
+        } catch (IOException | InvalidConfigurationException exception) {
+            getLogger().log(Level.SEVERE,
+                    "Could not load auth-data.yml. The plugin will stay disabled to protect saved account links.",
+                    exception);
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         getServer().getPluginManager().registerEvents(new RestrictedPlayerListener(this), this);
 
         PluginCommand authCommand = getCommand("auth");
@@ -122,6 +133,7 @@ public final class CommunityAuthGate extends JavaPlugin {
     void beginAuthentication(Player player) {
         UUID playerId = player.getUniqueId();
         authorizedSessions.remove(playerId);
+        eligibilityLastSuccess.remove(playerId);
         restrictedSessions.add(playerId);
         sessionStartedAt.put(playerId, System.currentTimeMillis());
         attemptWindows.remove(playerId);
@@ -135,6 +147,7 @@ public final class CommunityAuthGate extends JavaPlugin {
         authorizedSessions.remove(playerId);
         pendingApprovalSessions.remove(playerId);
         sessionStartedAt.remove(playerId);
+        eligibilityLastSuccess.remove(playerId);
         attemptWindows.remove(playerId);
     }
 
@@ -161,6 +174,7 @@ public final class CommunityAuthGate extends JavaPlugin {
                     continue;
                 }
                 authorizedSessions.remove(entry.getKey());
+                eligibilityLastSuccess.remove(entry.getKey());
                 Player player = getServer().getPlayer(entry.getKey());
                 if (player != null) {
                     player.kick(Component.text("You are no longer a member of the required Discord server."));
@@ -168,8 +182,13 @@ public final class CommunityAuthGate extends JavaPlugin {
             }
             for (AuthStore.Link pending : store.pendingLinks()) {
                 if (pending.discordId().equals(discordId)) {
-                    store.deny(pending.playerId());
                     pendingApprovalSessions.remove(pending.playerId());
+                    try {
+                        store.deny(pending.playerId());
+                    } catch (IOException exception) {
+                        getLogger().log(Level.SEVERE,
+                                "Could not remove a pending link after its Discord member left.", exception);
+                    }
                 }
             }
         });
@@ -195,16 +214,36 @@ public final class CommunityAuthGate extends JavaPlugin {
                     return;
                 }
                 if (!result.available()) {
-                    getLogger().warning("Could not recheck Discord eligibility for an active session; it remains active temporarily.");
+                    long lastSuccess = eligibilityLastSuccess.getOrDefault(playerId, 0L);
+                    long graceMillis = Math.max(0,
+                            getConfig().getLong("verification.eligibility-check-failure-grace-seconds", 300))
+                            * 1000L;
+                    if (lastSuccess > 0 && System.currentTimeMillis() - lastSuccess < graceMillis) {
+                        getLogger().warning("Discord eligibility could not be rechecked; the active session remains "
+                                + "authorized only during its configured failure grace period.");
+                        return;
+                    }
+                    authorizedSessions.remove(playerId);
+                    eligibilityLastSuccess.remove(playerId);
+                    Player player = getServer().getPlayer(playerId);
+                    if (player != null) {
+                        player.kick(Component.text(
+                                "Discord verification could not be confirmed. Please rejoin when Discord is available."));
+                    }
+                    getLogger().warning("Revoked an active session after Discord eligibility checks remained unavailable "
+                            + "beyond the configured grace period.");
                     return;
                 }
                 if (!result.eligible()) {
                     Player player = getServer().getPlayer(playerId);
                     authorizedSessions.remove(playerId);
+                    eligibilityLastSuccess.remove(playerId);
                     if (player != null) {
                         player.kick(Component.text("Your Discord access no longer meets the server requirements."));
                     }
                     getLogger().info("Revoked an online Minecraft session after Discord eligibility was lost.");
+                } else {
+                    eligibilityLastSuccess.put(playerId, System.currentTimeMillis());
                 }
             });
         });
@@ -270,13 +309,30 @@ public final class CommunityAuthGate extends JavaPlugin {
                                 "This Minecraft identity is linked to a different Discord account.", NamedTextColor.RED));
                         return;
                     }
-                    store.updatePlayerName(playerId, currentPlayer.getName());
+                    if (hasNameConflict(currentPlayer.getName(), playerId)) {
+                        currentPlayer.sendMessage(Component.text(
+                                "That Minecraft name is already linked to another identity. Contact an administrator.",
+                                NamedTextColor.RED));
+                        return;
+                    }
+                    try {
+                        store.updatePlayerName(playerId, currentPlayer.getName());
+                    } catch (IOException exception) {
+                        reportStorageFailure(currentPlayer, "update the saved Minecraft name", exception);
+                        return;
+                    }
                     authorizeSession(currentPlayer, discordId);
                     return;
                 }
 
                 Optional<AuthStore.Link> existingPending = store.getPending(playerId);
                 if (existingPending.isPresent()) {
+                    if (hasNameConflict(currentPlayer.getName(), playerId)) {
+                        currentPlayer.sendMessage(Component.text(
+                                "That Minecraft name is already linked to another identity. Contact an administrator.",
+                                NamedTextColor.RED));
+                        return;
+                    }
                     if (existingPending.get().discordId().equals(discordId)) {
                         pendingApprovalSessions.put(playerId, discordId);
                         currentPlayer.sendMessage(message("pending-approval"));
@@ -287,17 +343,32 @@ public final class CommunityAuthGate extends JavaPlugin {
                     return;
                 }
 
+                if (hasNameConflict(currentPlayer.getName(), playerId)) {
+                    currentPlayer.sendMessage(Component.text(
+                            "That Minecraft name is already linked to another identity. Contact an administrator.",
+                            NamedTextColor.RED));
+                    return;
+                }
                 AuthStore.Link newLink = new AuthStore.Link(playerId, currentPlayer.getName(), discordId,
                         Instant.now().toEpochMilli());
                 if (getConfig().getBoolean("verification.require-first-link-approval", true)) {
-                    store.stageLink(newLink);
+                    try {
+                        store.stageLink(newLink);
+                    } catch (IOException exception) {
+                        reportStorageFailure(currentPlayer, "save the pending account link", exception);
+                        return;
+                    }
                     pendingApprovalSessions.put(playerId, discordId);
                     currentPlayer.sendMessage(message("pending-approval"));
                     notifyAdmins("First-time Discord link waiting for approval: " + currentPlayer.getName()
                             + " (Discord ID " + discordId + "). Use /auth approve " + currentPlayer.getName() + ".");
                 } else {
-                    store.stageLink(newLink);
-                    store.approve(playerId);
+                    try {
+                        store.linkImmediately(newLink);
+                    } catch (IOException exception) {
+                        reportStorageFailure(currentPlayer, "save the account link", exception);
+                        return;
+                    }
                     authorizeSession(currentPlayer, discordId);
                 }
             });
@@ -326,9 +397,23 @@ public final class CommunityAuthGate extends JavaPlugin {
         pendingApprovalSessions.remove(playerId);
         restrictedSessions.remove(playerId);
         authorizedSessions.put(playerId, discordId);
+        eligibilityLastSuccess.put(playerId, System.currentTimeMillis());
         sessionStartedAt.remove(playerId);
         player.sendMessage(Component.text("✔ ", NamedTextColor.GREEN).append(message("verified")));
         getLogger().log(Level.INFO, "Verified Minecraft session for {0} through Discord.", player.getName());
+    }
+
+    private boolean hasNameConflict(String playerName, UUID playerId) {
+        return store.findLinkByName(playerName).filter(link -> !link.playerId().equals(playerId)).isPresent()
+                || store.findPendingByName(playerName).filter(link -> !link.playerId().equals(playerId)).isPresent();
+    }
+
+    private void reportStorageFailure(CommandSender sender, String operation, IOException exception) {
+        getLogger().log(Level.SEVERE,
+                "Could not " + operation + " in auth-data.yml; the request was not applied.", exception);
+        sender.sendMessage(Component.text(
+                "The server could not save your account data. Please contact an administrator and try again later.",
+                NamedTextColor.RED));
     }
 
     private void notifyAdmins(String message) {
@@ -441,13 +526,27 @@ public final class CommunityAuthGate extends JavaPlugin {
                         return;
                     }
                     if (!result.eligible()) {
-                        store.deny(link.playerId());
+                        try {
+                            store.deny(link.playerId());
+                        } catch (IOException exception) {
+                            reportStorageFailure(sender, "remove an ineligible pending link", exception);
+                            return;
+                        }
                         pendingApprovalSessions.remove(link.playerId());
                         sender.sendMessage(Component.text(
                                 "That Discord account is no longer eligible; the request was removed.", NamedTextColor.RED));
                         return;
                     }
-                    store.approve(link.playerId());
+                    try {
+                        if (!store.approve(link.playerId())) {
+                            sender.sendMessage(Component.text(
+                                    "That pending request has changed; no link was approved.", NamedTextColor.RED));
+                            return;
+                        }
+                    } catch (IOException exception) {
+                        reportStorageFailure(sender, "approve the account link", exception);
+                        return;
+                    }
                     Player pendingPlayer = getServer().getPlayer(link.playerId());
                     boolean sameSession = link.discordId().equals(pendingApprovalSessions.get(link.playerId()));
                     if (pendingPlayer != null && sameSession && restrictedSessions.contains(link.playerId())) {
@@ -461,8 +560,14 @@ public final class CommunityAuthGate extends JavaPlugin {
         }
 
         if (subcommand.equals("deny")) {
-            Optional<AuthStore.Link> removed = store.findPendingByName(name)
-                    .flatMap(link -> store.deny(link.playerId()));
+            Optional<AuthStore.Link> candidate = store.findPendingByName(name);
+            Optional<AuthStore.Link> removed;
+            try {
+                removed = candidate.isPresent() ? store.deny(candidate.get().playerId()) : Optional.empty();
+            } catch (IOException exception) {
+                reportStorageFailure(sender, "deny the pending account link", exception);
+                return true;
+            }
             if (removed.isEmpty()) {
                 sender.sendMessage(Component.text("No pending link found for " + name + ".", NamedTextColor.RED));
                 return true;
@@ -477,7 +582,13 @@ public final class CommunityAuthGate extends JavaPlugin {
             return true;
         }
 
-        Optional<AuthStore.Link> removed = store.unlinkByName(name);
+        Optional<AuthStore.Link> removed;
+        try {
+            removed = store.unlinkByName(name);
+        } catch (IOException exception) {
+            reportStorageFailure(sender, "remove the saved account link", exception);
+            return true;
+        }
         if (removed.isEmpty()) {
             sender.sendMessage(Component.text("No saved link found for " + name + ".", NamedTextColor.RED));
             return true;
@@ -485,6 +596,7 @@ public final class CommunityAuthGate extends JavaPlugin {
         Player linkedPlayer = getServer().getPlayer(removed.get().playerId());
         if (linkedPlayer != null) {
             authorizedSessions.remove(removed.get().playerId());
+            eligibilityLastSuccess.remove(removed.get().playerId());
             linkedPlayer.kick(Component.text("Your Minecraft identity was unlinked. Rejoin to link it again."));
         }
         sender.sendMessage(Component.text("Unlinked " + removed.get().playerName() + ".", NamedTextColor.GREEN));

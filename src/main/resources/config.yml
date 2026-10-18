@@ -5,7 +5,7 @@ discord:
   # Create an application/bot in the Discord Developer Portal and invite it to your guild.
   guild-id: "1543636647739007016"
   # The bot token is read from this environment variable and is never stored in this file.
-  token-environment-variable: "MTU2MTQwNDAzODY4NjE4NzU5Mg.G_csx6.zMUgMkU1bih50urwu1AsmlKqVSYOcM5ecjPOzw"
+  token-environment-variable: COMMUNITY_AUTH_DISCORD_TOKEN
   eligibility:
     # Set true only if every guild member should qualify.
     allow-any-guild-member: false
@@ -22,6 +22,8 @@ verification:
   require-first-link-approval: true
   # Recheck online players' Discord eligibility at this interval.
   eligibility-recheck-seconds: 60
+  # Disconnect authorized players if Discord cannot confirm eligibility for this long.
+  eligibility-check-failure-grace-seconds: 300
   # Disconnect players who never finish authentication.
   authentication-timeout-seconds: 180
   max-unauthenticated-players: 8

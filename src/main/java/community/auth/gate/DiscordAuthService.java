@@ -97,6 +97,19 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
             plugin.getLogger().log(Level.SEVERE, "Discord bot is not in configured guild {0}.", guildId);
             return;
         }
+        Set<String> configuredRoleIds = new HashSet<>(requiredAnyRoleIds);
+        configuredRoleIds.addAll(requiredAllRoleIds);
+        for (String roleId : configuredRoleIds) {
+            if (guild.getRoleById(roleId) == null) {
+                plugin.getLogger().log(Level.SEVERE,
+                        "Configured Discord role {0} does not exist in guild {1}; check eligibility settings.",
+                        new Object[]{roleId, guildId});
+            }
+        }
+        if (configuredRoleIds.isEmpty() && !allowAnyGuildMember) {
+            plugin.getLogger().severe(
+                    "No Discord eligibility roles are configured and allow-any-guild-member is false; nobody can verify.");
+        }
         guild.updateCommands()
                 .addCommands(Commands.slash("mc-verify", "Create a one-time Minecraft verification code"))
                 .queue(ignored -> {
@@ -113,21 +126,19 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
         }
         Guild eventGuild = event.getGuild();
         if (eventGuild == null || !eventGuild.getId().equals(guildId)) {
-            event.reply("Use this command in the configured community server.")
-                    .setEphemeral(true).queue();
+            replyEphemerally(event, "Use this command in the configured community server.");
             return;
         }
         Member member = event.getMember();
         if (member == null || !isEligible(member)) {
-            event.reply("Your Discord account does not currently meet the server's access requirements.")
-                    .setEphemeral(true).queue();
+            replyEphemerally(event,
+                    "Your Discord account does not currently meet the server's access requirements.");
             return;
         }
 
         String code = issueCode(event.getUser().getId());
-        event.reply("Minecraft verification code: **" + code + "**\n"
-                        + "It expires in " + codeLifetimeSeconds + " seconds. Enter it in Minecraft as `/auth " + code + "`.")
-                .setEphemeral(true).queue();
+        replyEphemerally(event, "Minecraft verification code: **" + code + "**\n"
+                + "It expires in " + codeLifetimeSeconds + " seconds. Enter it in Minecraft as `/auth " + code + "`.");
     }
 
     @Override
@@ -174,7 +185,19 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
                 member -> callback.accept(member == null
                         ? EligibilityResult.unavailableResult()
                         : isEligible(member) ? EligibilityResult.pass() : EligibilityResult.fail()),
-                error -> callback.accept(EligibilityResult.unavailableResult()));
+                error -> {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Discord eligibility lookup failed; treating the result as unavailable.", error);
+                    callback.accept(EligibilityResult.unavailableResult());
+                });
+    }
+
+    private void replyEphemerally(SlashCommandInteractionEvent event, String message) {
+        event.reply(message).setEphemeral(true).queue(
+                ignored -> {
+                },
+                error -> plugin.getLogger().log(Level.WARNING,
+                        "Could not send a response to the Discord verification command.", error));
     }
 
     private synchronized String issueCode(String discordId) {

@@ -1,54 +1,109 @@
 # Community Auth Gate
 
-Paper plugin with an embedded Discord bot for a mixed Java and Bedrock server. It targets Paper 26.3 build 175 and uses Geyser/Floodgate's player UUIDs as presented by Paper. Keep the server in offline mode for TLauncher compatibility and set Geyser's `auth-type` to `floodgate` for Bedrock accounts without Java Edition.
+Community Auth Gate is a Paper plugin that requires players to verify through a Discord server before they can play. It is intended for mixed Java/Bedrock servers that use offline mode with Geyser and Floodgate.
 
-## How admission works
+> **Important:** Offline mode does not authenticate Java accounts with Mojang. Discord verification links a Minecraft identity to a Discord account, but it cannot prove ownership of a Java account. First-link moderator approval helps reduce identity-claiming risk; it does not eliminate the limitations of offline mode.
 
-1. Every new Minecraft session starts restricted. It cannot move, chat, use commands, interact with the world, or affect other players. Sessions time out after the configured period.
-2. An eligible Discord member runs `/mc-verify` in the configured Discord server. The bot responds ephemerally with a random, single-use code that expires after five minutes.
-3. The player enters `/auth <code>` in Minecraft. The plugin checks the code, then independently rechecks guild membership and configured roles.
-4. On the first successful link, the Minecraft UUID and Discord user ID are saved as a pending link. A moderator approves it once. Later sessions must verify with the same Discord account.
-5. Discord role or membership changes revoke an active session. The plugin listens for member events and also polls active identities every minute.
+## Requirements
 
-The plugin is the live admission gate; it does not write to `whitelist.json`. Turn the vanilla whitelist off so it does not block new players before they can verify. The Paper `online-mode=false` setting remains unchanged.
+- Paper 26.3 build 175, or a compatible build
+- Java 25 or newer
+- Gradle to build the plugin
+- A Discord bot with the **Server Members Intent**
+- For Bedrock players: Geyser-Spigot and Floodgate-Spigot, with Geyser `auth-type: floodgate`
 
-Offline Java usernames are not authenticated by Mojang. First-link moderator approval prevents an unknown player from silently claiming an existing member's name, and requiring the linked Discord account on every session prevents someone from reusing that name alone. This does not stop connection-flooding at the public tunnel, and it cannot prove Java account ownership while the server is in offline mode.
+Keep Floodgate's username prefix enabled to help avoid Java/Bedrock name collisions. The plugin uses the UUID Paper provides; it does not manage `whitelist.json`.
+
+## Player verification flow
+
+1. A joining player starts in a restricted state. Movement, chat, commands other than the verification command, and common interactions are blocked. The session is disconnected if it exceeds the configured authentication timeout.
+2. The player runs `/mc-verify` in the configured Discord server. The bot responds privately with a random, single-use code.
+3. The player enters `/auth <code>` in Minecraft. The code expires, is consumed once, and the plugin checks current guild membership and role eligibility.
+4. A first-time link is saved as pending by default. A moderator reviews it and approves or denies it. On later sessions, the Minecraft identity must verify with the same Discord account.
+5. Active sessions are rechecked for Discord eligibility. Losing membership or required roles revokes access. When a check reports Discord as unavailable, `verification.eligibility-check-failure-grace-seconds` controls how long an active session may remain authorized after its last successful check.
+
+The plugin limits the number of unauthenticated sessions and the number of code attempts per player. These safeguards do **not** prevent connection floods against the server or its public tunnel.
 
 ## Build
 
-Build with JDK 25 or newer and Gradle:
+From the repository root, with JDK 25 and Gradle available:
 
 ```powershell
 gradle clean build
 ```
 
-The plugin jar is `build/libs/community-auth-gate-0.1.0.jar`. JDA is bundled in the jar; Paper is a provided API dependency.
+The plugin JAR is `build/libs/community-auth-gate-0.1.0.jar`. JDA is bundled in the JAR; the Paper API is provided by the server at runtime. This repository does not include a Gradle wrapper.
 
 ## Discord setup
 
-1. Create a Discord application and bot in the Discord Developer Portal. Copy the bot token once and keep it private.
-2. Enable **Server Members Intent** under the bot's privileged gateway intents. The bot needs this to receive role/removal events and revoke access promptly.
-3. Invite the bot to the community server with the `bot` and `applications.commands` scopes. It needs no message or administrator permissions.
-4. Enable Developer Mode in Discord and copy the server ID and the role IDs used for eligibility.
-5. Set `COMMUNITY_AUTH_DISCORD_TOKEN` as a Windows user environment variable, then restart the server process. Do not put the bot token in `config.yml` or commit it.
+1. Create a Discord application and bot in the Discord Developer Portal.
+2. Enable **Server Members Intent** in the bot's privileged gateway intents. The bot needs it to receive member and role changes.
+3. Invite the bot to your server with the `bot` and `applications.commands` scopes. It does not need administrator or message permissions.
+4. Enable Developer Mode in Discord and copy the server ID and the IDs of the roles that qualify players.
+5. Provide the bot token to the Minecraft server process as the `COMMUNITY_AUTH_DISCORD_TOKEN` environment variable. Restart the server after setting it. Never put the token in this repository or in `config.yml`.
 
-## Server setup
+If a bot token has ever been committed or exposed, revoke it in the Discord Developer Portal and create a replacement. Removing it from the current files does not remove it from Git history.
 
-1. Copy the jar into `plugins/` and start the server once to generate `plugins/CommunityAuthGate/config.yml`.
-2. Set `discord.guild-id` to the Discord server ID. Fill in `required-any-role-ids` and/or `required-all-role-ids` with quoted role IDs. If both lists are empty, nobody qualifies unless `allow-any-guild-member` is set to `true`.
-   - A member must have at least one role in `required-any-role-ids` when that list is populated.
+## Install and configure
+
+1. Copy the JAR into the server's `plugins/` directory and start the server once. Paper creates `plugins/CommunityAuthGate/config.yml`.
+2. Set `discord.guild-id` to your Discord server ID. Configure role IDs in `required-any-role-ids` and/or `required-all-role-ids`:
+   - When `required-any-role-ids` is non-empty, a member must have at least one listed role.
    - A member must have every role in `required-all-role-ids`.
-   - If both are populated, both checks apply.
-3. Confirm `online-mode=false`, `auth-type: floodgate`, and that Geyser-Spigot and Floodgate-Spigot are installed. Keep Floodgate's username prefix enabled so Java and Bedrock names cannot collide. Turn the vanilla whitelist off.
-4. Set `enabled: true` only after the Discord token, guild ID, and eligibility rules are configured. Restart the server.
-5. Test with one Java player and one Bedrock player before sharing the join address widely.
+   - If both lists are populated, both rules apply.
+   - If both lists are empty, nobody qualifies unless `allow-any-guild-member: true`.
+3. Check the server setup:
+   - Set `online-mode=false` only if that is an intentional server requirement.
+   - For Bedrock support, install Geyser-Spigot and Floodgate-Spigot and set Geyser's `auth-type` to `floodgate`.
+   - Turn off Paper's vanilla whitelist; otherwise a player not already whitelisted may be rejected before they can use `/auth`.
+4. Verify the Discord token is available to the server process. Then set `enabled: true` in the plugin config and restart the server.
+5. Test the complete flow with a Java player and a Bedrock player before sharing the address.
 
-## First-time moderator approval
+The shipped config starts with `enabled: false`. Leave it disabled until the Discord server ID, bot token, and eligibility rules are configured.
 
-First-time account links are pending by default because offline-mode names can be claimed. Have the player request a code, join, and run `/auth <code>`. Review requests with `/auth pending`, then approve or deny with `/auth approve <player>` or `/auth deny <player>`. A console operator can run these commands if no moderator has linked an account yet. Use `/auth unlink <player>` to remove a saved link.
+## Configuration reference
 
-Player moderators need the `communityauth.admin` permission **and** a verified Discord session. Console commands do not require a player session.
+| Setting | Default | Purpose |
+|---|---:|---|
+| `enabled` | `false` | Turns the admission gate on or off. |
+| `discord.guild-id` | Example ID | Discord server the bot uses for verification. Replace this value. |
+| `discord.token-environment-variable` | `COMMUNITY_AUTH_DISCORD_TOKEN` | Name of the environment variable containing the bot token. |
+| `discord.eligibility.allow-any-guild-member` | `false` | Allows any guild member only when no role lists are configured. |
+| `discord.eligibility.required-any-role-ids` | `[]` | Member must have at least one listed role when populated. |
+| `discord.eligibility.required-all-role-ids` | Example role ID | Member must have all listed roles. Replace this value. |
+| `verification.code-lifetime-seconds` | `300` | Code lifetime; the plugin enforces a minimum of 60 seconds. |
+| `verification.max-attempts-per-window` | `8` | Maximum code submissions allowed per player in an attempt window. |
+| `verification.attempt-window-seconds` | `120` | Code-attempt rate-limit window; the plugin enforces a minimum of 30 seconds. |
+| `verification.require-first-link-approval` | `true` | Holds new identity links for moderator approval. |
+| `verification.eligibility-recheck-seconds` | `60` | Interval for fallback eligibility checks; the plugin enforces a minimum of 30 seconds. |
+| `verification.eligibility-check-failure-grace-seconds` | `300` | How long an active session may remain authorized after its last successful check when a check reports Discord unavailable. |
+| `verification.authentication-timeout-seconds` | `180` | Time allowed to finish verification; the plugin enforces a minimum of 30 seconds. |
+| `verification.max-unauthenticated-players` | `8` | Maximum number of sessions allowed to wait for authentication. |
 
-## Stored data and secrets
+The plugin reads timing and rate-limit settings at startup. Restart the server after changing the configuration.
 
-`plugins/CommunityAuthGate/auth-data.yml` stores Minecraft UUIDs, player names, Discord user IDs, and link timestamps. It does not store codes or bot tokens. Back it up with the server and restrict access to the server folder. Never share Floodgate's `key.pem`.
+## Moderator commands
+
+| Command | Description |
+|---|---|
+| `/auth pending` | Lists first-time links waiting for review. |
+| `/auth approve <player>` | Rechecks the player's Discord eligibility, then approves the pending link. |
+| `/auth deny <player>` | Removes a pending link and disconnects that player if online. |
+| `/auth unlink <player>` | Removes a saved link and disconnects that player if online. |
+
+Players need `communityauth.admin` **and** a verified session to use moderator commands. Console operators do not need a player session and can perform initial approvals if no moderator has linked an account yet.
+
+## Data, errors, and recovery
+
+`plugins/CommunityAuthGate/auth-data.yml` contains Minecraft UUIDs, player names, Discord user IDs, and link timestamps. It does not contain bot tokens or verification codes.
+
+The plugin writes updates through a temporary file before replacing the data file. If data cannot be loaded at startup, the plugin disables itself rather than continuing with missing account links. If a save fails, the requested change is not applied or reported as successful; check the server log and filesystem permissions before retrying. Back up the server folder, including this data file, and restrict access to it.
+
+If verification is unavailable, check the server log, bot token environment variable, configured guild and role IDs, bot membership in the guild, and the **Server Members Intent** setting. The bot must be running and connected for players to obtain and redeem codes. Do not share Floodgate's `key.pem`.
+
+## Known limitations
+
+- Offline-mode Java usernames are not authenticated by Mojang; use a server mode and identity setup appropriate for your threat model.
+- Discord outages can interrupt new verification and eligibility checks.
+- The plugin is not a network-level DDoS or connection-flood defense.
+- Test role changes, Discord outages, approval/denial, backups, and server restarts on a staging server before relying on it for a public server.
