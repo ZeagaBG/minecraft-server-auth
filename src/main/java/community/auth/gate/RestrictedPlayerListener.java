@@ -88,7 +88,7 @@ final class RestrictedPlayerListener implements Listener {
         String[] parts = event.getMessage().trim().split("\\s+");
         boolean isAuthCode = parts.length == 2
                 && parts[0].equalsIgnoreCase("/auth")
-                && parts[1].matches("[A-Za-z2-9]{6,16}");
+                && parts[1].matches("\\d{6}");
         if (!isAuthCode) {
             event.setCancelled(true);
             event.getPlayer().sendMessage(plugin.message("restricted"));

@@ -1,9 +1,16 @@
 # Start disabled so an incomplete setup cannot accidentally lock players out.
 enabled: false
 
+updates:
+  # Checks the latest published stable release once at startup and logs its download link.
+  # Set false to disable network checks. The check never downloads or installs a JAR.
+  enabled: true
+  github-repository: "ZeagaBG/minecraft-server-auth"
+  timeout-seconds: 8
+
 discord:
   # Create an application/bot in the Discord Developer Portal and invite it to your guild.
-  guild-id: "1543636647739007016"
+  guild-id: ""
   # The bot token is read from this environment variable and is never stored in this file.
   token-environment-variable: COMMUNITY_AUTH_DISCORD_TOKEN
   eligibility:
@@ -12,7 +19,7 @@ discord:
     # A member needs at least one listed role when this list is non-empty.
     required-any-role-ids: []
     # A member must have every listed role.
-    required-all-role-ids: ["1549166157737492673"]
+    required-all-role-ids: []
 
 verification:
   code-lifetime-seconds: 300
@@ -25,12 +32,12 @@ verification:
   # Disconnect authorized players if Discord cannot confirm eligibility for this long.
   eligibility-check-failure-grace-seconds: 300
   # Disconnect players who never finish authentication.
-  authentication-timeout-seconds: 180
+  authentication-timeout-seconds: 300
   max-unauthenticated-players: 8
 
 messages:
-  restricted: "Verify through Discord, then run /auth <code> in Minecraft."
-  code-issued: "Your code is ready. Enter it with /auth <code>."
+  restricted: "Verify through Discord, then run /auth <6-digit code> in Minecraft."
+  code-issued: "Your 6-digit code was sent to your Discord DMs."
   verified: "Discord verified. You may now play."
   pending-approval: "Your first Minecraft link is waiting for moderator approval."
   denied: "That code is invalid, expired, or your Discord account is not eligible."

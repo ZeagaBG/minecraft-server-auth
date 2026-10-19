@@ -48,8 +48,7 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
     private record PendingCode(String discordId, long expiresAt) {
     }
 
-    private static final String CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    private static final int CODE_LENGTH = 10;
+    private static final int CODE_LENGTH = 6;
 
     private final CommunityAuthGate plugin;
     private final String guildId;
@@ -136,9 +135,29 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
             return;
         }
 
-        String code = issueCode(event.getUser().getId());
-        replyEphemerally(event, "Minecraft verification code: **" + code + "**\n"
-                + "It expires in " + codeLifetimeSeconds + " seconds. Enter it in Minecraft as `/auth " + code + "`.");
+        event.deferReply(true).queue(hook -> event.getUser().openPrivateChannel().queue(
+                privateChannel -> {
+                    String code = issueCode(event.getUser().getId());
+                    privateChannel.sendMessage("Minecraft verification code: **" + code + "**\n"
+                                    + "It expires in " + codeLifetimeSeconds
+                                    + " seconds. Enter it in Minecraft as `/auth " + code + "`.")
+                            .queue(ignored -> hook.editOriginal("I sent your verification code in a DM.").queue(),
+                                    error -> {
+                                        discardCode(code);
+                                        plugin.getLogger().log(Level.WARNING,
+                                                "Could not DM a Minecraft verification code.", error);
+                                        hook.editOriginal("I couldn't DM you. Enable direct messages from server members, "
+                                                        + "then run `/mc-verify` again.")
+                                                .queue();
+                                    });
+                }, error -> {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Could not open a DM channel for a Minecraft verification code.", error);
+                    hook.editOriginal("I couldn't DM you. Enable direct messages from server members, "
+                                    + "then run `/mc-verify` again.")
+                            .queue();
+                }), error -> plugin.getLogger().log(Level.WARNING,
+                "Could not acknowledge the Discord verification command.", error));
     }
 
     @Override
@@ -210,17 +229,20 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
         }
         String code;
         do {
-            StringBuilder builder = new StringBuilder(CODE_LENGTH);
-            for (int i = 0; i < CODE_LENGTH; i++) {
-                builder.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
-            }
-            code = builder.toString();
+            code = String.format(Locale.ROOT, "%0" + CODE_LENGTH + "d", random.nextInt(1_000_000));
         } while (codes.containsKey(code));
 
         codes.put(code, new PendingCode(discordId,
                 System.currentTimeMillis() + codeLifetimeSeconds * 1000L));
         activeCodeByDiscordId.put(discordId, code);
         return code;
+    }
+
+    private synchronized void discardCode(String code) {
+        PendingCode pending = codes.remove(code);
+        if (pending != null) {
+            activeCodeByDiscordId.remove(pending.discordId(), code);
+        }
     }
 
     private boolean isEligible(Member member) {

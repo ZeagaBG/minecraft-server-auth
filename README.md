@@ -16,9 +16,9 @@ Keep Floodgate's username prefix enabled to help avoid Java/Bedrock name collisi
 
 ## Player verification flow
 
-1. A joining player starts in a restricted state. Movement, chat, commands other than the verification command, and common interactions are blocked. The session is disconnected if it exceeds the configured authentication timeout.
-2. The player runs `/mc-verify` in the configured Discord server. The bot responds privately with a random, single-use code.
-3. The player enters `/auth <code>` in Minecraft. The code expires, is consumed once, and the plugin checks current guild membership and role eligibility.
+1. A joining non-admin player starts in a restricted state. Movement, chat, commands other than the verification command, and common interactions are blocked. The session is disconnected if it exceeds the configured authentication timeout. Operators and players with `communityauth.admin` bypass this gate.
+2. The player runs `/mc-verify` in the configured Discord server. The bot sends a random, single-use six-digit numeric code to their Discord DMs; the slash-command response only confirms delivery.
+3. The player enters `/auth <6-digit code>` in Minecraft. The code expires, is consumed once, and the plugin checks current guild membership and role eligibility.
 4. A first-time link is saved as pending by default. A moderator reviews it and approves or denies it. On later sessions, the Minecraft identity must verify with the same Discord account.
 5. Active sessions are rechecked for Discord eligibility. Losing membership or required roles revokes access. When a check reports Discord as unavailable, `verification.eligibility-check-failure-grace-seconds` controls how long an active session may remain authorized after its last successful check.
 
@@ -33,6 +33,18 @@ gradle clean build
 ```
 
 The plugin JAR is `build/libs/community-auth-gate-0.1.0.jar`. JDA is bundled in the JAR; the Paper API is provided by the server at runtime. This repository does not include a Gradle wrapper.
+
+## Publishing releases and update checks
+
+The plugin checks GitHub once when Paper starts. It compares the plugin version with the latest published stable release and logs a download link when a newer version is available. The check runs in the background, does not need a GitHub token, and never downloads or replaces the JAR. A server admin installs an update by stopping Paper, replacing the JAR, and starting Paper again.
+
+To publish an update:
+
+1. Increase `version` in `build.gradle`, for example from `0.1.0` to `0.1.1`.
+2. Build with `gradle clean build` and create a GitHub Release with the matching tag, for example `v0.1.1`.
+3. Attach the generated JAR from `build/libs/` to that release. The release must be published as a stable release; drafts and prereleases are ignored by GitHub's latest-release endpoint.
+
+The `updates.github-repository` setting in the generated `config.yml` must be `owner/repository`. The shipped value points to this repository. Set `updates.enabled: false` to turn off the check. Existing server configs that predate this setting also use the built-in repository default.
 
 ## Discord setup
 
@@ -66,6 +78,9 @@ The shipped config starts with `enabled: false`. Leave it disabled until the Dis
 | Setting | Default | Purpose |
 |---|---:|---|
 | `enabled` | `false` | Turns the admission gate on or off. |
+| `updates.enabled` | `true` | Checks GitHub for a newer stable release at startup. |
+| `updates.github-repository` | `ZeagaBG/minecraft-server-auth` | Public GitHub repository in `owner/repository` form. |
+| `updates.timeout-seconds` | `8` | Maximum time allowed for the update request, clamped to 2–15 seconds. |
 | `discord.guild-id` | Example ID | Discord server the bot uses for verification. Replace this value. |
 | `discord.token-environment-variable` | `COMMUNITY_AUTH_DISCORD_TOKEN` | Name of the environment variable containing the bot token. |
 | `discord.eligibility.allow-any-guild-member` | `false` | Allows any guild member only when no role lists are configured. |
@@ -91,7 +106,7 @@ The plugin reads timing and rate-limit settings at startup. Restart the server a
 | `/auth deny <player>` | Removes a pending link and disconnects that player if online. |
 | `/auth unlink <player>` | Removes a saved link and disconnects that player if online. |
 
-Players need `communityauth.admin` **and** a verified session to use moderator commands. Console operators do not need a player session and can perform initial approvals if no moderator has linked an account yet.
+Players with `communityauth.admin` can use moderator commands without linking a Discord account; this permission also bypasses the admission gate. Console operators can perform initial approvals without a player session. Grant the permission only to trusted staff.
 
 ## Data, errors, and recovery
 

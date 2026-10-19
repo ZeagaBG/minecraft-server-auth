@@ -46,6 +46,9 @@ public final class CommunityAuthGate extends JavaPlugin {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        if (getConfig().getBoolean("updates.enabled", true)) {
+            GitHubUpdateChecker.schedule(this);
+        }
         maxUnauthenticatedPlayers = Math.max(1,
                 getConfig().getInt("verification.max-unauthenticated-players", 8));
         try {
@@ -132,6 +135,15 @@ public final class CommunityAuthGate extends JavaPlugin {
 
     void beginAuthentication(Player player) {
         UUID playerId = player.getUniqueId();
+        if (isAdminBypass(player)) {
+            restrictedSessions.remove(playerId);
+            authorizedSessions.remove(playerId);
+            pendingApprovalSessions.remove(playerId);
+            sessionStartedAt.remove(playerId);
+            eligibilityLastSuccess.remove(playerId);
+            attemptWindows.remove(playerId);
+            return;
+        }
         authorizedSessions.remove(playerId);
         eligibilityLastSuccess.remove(playerId);
         restrictedSessions.add(playerId);
@@ -418,7 +430,7 @@ public final class CommunityAuthGate extends JavaPlugin {
 
     private void notifyAdmins(String message) {
         for (Player online : getServer().getOnlinePlayers()) {
-            if (online.hasPermission(ADMIN_PERMISSION) && authorizedSessions.containsKey(online.getUniqueId())) {
+            if (online.hasPermission(ADMIN_PERMISSION)) {
                 online.sendMessage(Component.text("[Auth] ", NamedTextColor.GOLD)
                         .append(Component.text(message)));
             }
@@ -434,14 +446,20 @@ public final class CommunityAuthGate extends JavaPlugin {
                 return true;
             }
             if (isRestricted(player)) {
-                if (args.length == 1 && args[0].matches("(?i)[A-HJ-NP-Z2-9]{10}")) {
+                if (args.length == 1 && args[0].matches("\\d{6}")) {
                     requireAuthenticationCode(player, args[0]);
                 } else {
                     player.sendMessage(message("restricted"));
                 }
                 return true;
             }
-            if (!authorizedSessions.containsKey(player.getUniqueId())) {
+            if (isAdminBypass(player)) {
+                if (args.length == 1 && args[0].matches("\\d{6}")) {
+                    player.sendMessage(Component.text(
+                            "Operators and auth admins are exempt from Discord verification.", NamedTextColor.GRAY));
+                    return true;
+                }
+            } else if (!authorizedSessions.containsKey(player.getUniqueId())) {
                 player.sendMessage(Component.text("You must complete Discord verification first.", NamedTextColor.RED));
                 return true;
             }
@@ -465,11 +483,16 @@ public final class CommunityAuthGate extends JavaPlugin {
             sender.sendMessage(Component.text("You do not have permission to manage account links.", NamedTextColor.RED));
             return true;
         }
-        if (sender instanceof Player player && !authorizedSessions.containsKey(player.getUniqueId())) {
+        if (sender instanceof Player player && !isAdminBypass(player)
+                && !authorizedSessions.containsKey(player.getUniqueId())) {
             sender.sendMessage(Component.text("Verify your own session before using admin auth commands.", NamedTextColor.RED));
             return true;
         }
         return handleAdminCommand(sender, subcommand, args);
+    }
+
+    private boolean isAdminBypass(Player player) {
+        return player.isOp() || player.hasPermission(ADMIN_PERMISSION);
     }
 
     private boolean handleAdminCommand(CommandSender sender, String subcommand, String[] args) {
