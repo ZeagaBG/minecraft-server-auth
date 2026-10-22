@@ -20,6 +20,9 @@ discord:
     required-any-role-ids: []
     # A member must have every listed role.
     required-all-role-ids: []
+  # Members with at least one of these roles can run /mc commands as the server console.
+  # Keep this list limited to trusted staff. An empty list denies everyone.
+  minecraft-command-role-ids: []
 
 verification:
   code-lifetime-seconds: 300

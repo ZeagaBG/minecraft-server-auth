@@ -36,7 +36,7 @@ The plugin JAR is `build/libs/community-auth-gate-0.1.0.jar`. JDA is bundled in 
 
 ## Publishing releases and update checks
 
-The plugin checks GitHub once when Paper starts. It compares the plugin version with the latest published stable release and logs a download link when a newer version is available. The check runs in the background, does not need a GitHub token, and never downloads or replaces the JAR. A server admin installs an update by stopping Paper, replacing the JAR, and starting Paper again.
+The plugin checks GitHub once when Paper starts. It compares the plugin version with the latest published stable release and logs whether it is up to date, an update is available, or the check failed. The check runs in the background, does not need a GitHub token, and never downloads or replaces the JAR. A server admin installs an update by stopping Paper, replacing the JAR, and starting Paper again.
 
 To publish an update:
 
@@ -86,6 +86,7 @@ The shipped config starts with `enabled: false`. Leave it disabled until the Dis
 | `discord.eligibility.allow-any-guild-member` | `false` | Allows any guild member only when no role lists are configured. |
 | `discord.eligibility.required-any-role-ids` | `[]` | Member must have at least one listed role when populated. |
 | `discord.eligibility.required-all-role-ids` | Example role ID | Member must have all listed roles. Replace this value. |
+| `discord.minecraft-command-role-ids` | `[]` | Discord roles permitted to run Minecraft console commands using `/mc`. |
 | `verification.code-lifetime-seconds` | `300` | Code lifetime; the plugin enforces a minimum of 60 seconds. |
 | `verification.max-attempts-per-window` | `8` | Maximum code submissions allowed per player in an attempt window. |
 | `verification.attempt-window-seconds` | `120` | Code-attempt rate-limit window; the plugin enforces a minimum of 30 seconds. |
@@ -107,6 +108,12 @@ The plugin reads timing and rate-limit settings at startup. Restart the server a
 | `/auth unlink <player>` | Removes a saved link and disconnects that player if online. |
 
 Players with `communityauth.admin` can use moderator commands without linking a Discord account; this permission also bypasses the admission gate. Console operators can perform initial approvals without a player session. Grant the permission only to trusted staff.
+
+## Discord Minecraft commands
+
+Trusted Discord staff can run Minecraft commands with `/mc command:<command>`, for example `/mc command:ban ExamplePlayer`. Enter the command without its leading slash. The plugin runs it as the Paper console on the server thread, then broadcasts `[Discord display name]: /command` in game and records the Discord display name and command in the server log.
+
+To enable it, add trusted Discord role IDs to `discord.minecraft-command-role-ids` in `plugins/CommunityAuthGate/config.yml`. A member must have at least one listed role; an empty list denies everyone. This grants console-level power, so include only roles whose members should be able to run any server command. The bot itself does not need Discord Administrator permission.
 
 ## Data, errors, and recovery
 

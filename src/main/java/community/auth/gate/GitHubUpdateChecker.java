@@ -54,11 +54,12 @@ final class GitHubUpdateChecker {
                     .build()
                     .send(request, HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() == 404) {
-                plugin.getLogger().fine("Update check found no published stable GitHub release yet.");
+                plugin.getLogger().info("Update check finished: no published stable GitHub release was found.");
                 return;
             }
             if (response.statusCode() != 200) {
-                plugin.getLogger().fine("Update check failed with GitHub HTTP status " + response.statusCode() + ".");
+                plugin.getLogger().warning("Update check failed: GitHub returned HTTP status "
+                        + response.statusCode() + ".");
                 return;
             }
 
@@ -75,16 +76,17 @@ final class GitHubUpdateChecker {
                 plugin.getLogger().warning("Update check could not compare version '" + currentVersion
                         + "' with GitHub release '" + latest + "'. Use numeric versions such as 1.2.3.");
             } else if (comparison > 0) {
-                plugin.getLogger().info("A newer release is available (" + latest + "; current: " + currentVersion
+                plugin.getLogger().info("Update available: " + latest + " (current: " + currentVersion
                         + "). Download it from " + releaseUrl);
             } else {
-                plugin.getLogger().fine("Plugin is up to date (" + currentVersion + ").");
+                plugin.getLogger().info("Update check finished: CommunityAuthGate is up to date ("
+                        + currentVersion + "; latest: " + latest + ").");
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            plugin.getLogger().fine("Update check was interrupted.");
+            plugin.getLogger().warning("Update check was interrupted before it could finish.");
         } catch (IOException | IllegalArgumentException exception) {
-            plugin.getLogger().fine("Update check could not reach GitHub: " + exception.getMessage());
+            plugin.getLogger().warning("Update check could not reach GitHub: " + exception.getMessage());
         }
     }
 

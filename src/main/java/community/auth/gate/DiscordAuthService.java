@@ -11,6 +11,7 @@ import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEve
 import net.dv8tion.jda.api.events.session.ReadyEvent;
 import net.dv8tion.jda.api.hooks.ListenerAdapter;
 import net.dv8tion.jda.api.interactions.commands.build.Commands;
+import net.dv8tion.jda.api.interactions.commands.OptionType;
 import net.dv8tion.jda.api.requests.GatewayIntent;
 import javax.annotation.Nonnull;
 
@@ -56,6 +57,7 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
     private final boolean allowAnyGuildMember;
     private final Set<String> requiredAnyRoleIds;
     private final Set<String> requiredAllRoleIds;
+    private final Set<String> minecraftCommandRoleIds;
     private final SecureRandom random = new SecureRandom();
     private final Map<String, PendingCode> codes = new HashMap<>();
     private final Map<String, String> activeCodeByDiscordId = new HashMap<>();
@@ -73,6 +75,8 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
                 plugin.getConfig().getStringList("discord.eligibility.required-any-role-ids"));
         this.requiredAllRoleIds = stringSet(
                 plugin.getConfig().getStringList("discord.eligibility.required-all-role-ids"));
+        this.minecraftCommandRoleIds = stringSet(
+                plugin.getConfig().getStringList("discord.minecraft-command-role-ids"));
     }
 
     void start(String token) {
@@ -96,21 +100,31 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
             plugin.getLogger().log(Level.SEVERE, "Discord bot is not in configured guild {0}.", guildId);
             return;
         }
-        Set<String> configuredRoleIds = new HashSet<>(requiredAnyRoleIds);
-        configuredRoleIds.addAll(requiredAllRoleIds);
+        Set<String> eligibilityRoleIds = new HashSet<>(requiredAnyRoleIds);
+        eligibilityRoleIds.addAll(requiredAllRoleIds);
+        Set<String> configuredRoleIds = new HashSet<>(eligibilityRoleIds);
+        configuredRoleIds.addAll(minecraftCommandRoleIds);
         for (String roleId : configuredRoleIds) {
             if (guild.getRoleById(roleId) == null) {
                 plugin.getLogger().log(Level.SEVERE,
-                        "Configured Discord role {0} does not exist in guild {1}; check eligibility settings.",
+                        "Configured Discord role {0} does not exist in guild {1}; check role ID settings.",
                         new Object[]{roleId, guildId});
             }
         }
-        if (configuredRoleIds.isEmpty() && !allowAnyGuildMember) {
+        if (eligibilityRoleIds.isEmpty() && !allowAnyGuildMember) {
             plugin.getLogger().severe(
                     "No Discord eligibility roles are configured and allow-any-guild-member is false; nobody can verify.");
         }
-        guild.updateCommands()
-                .addCommands(Commands.slash("mc-verify", "Create a one-time Minecraft verification code"))
+        if (minecraftCommandRoleIds.isEmpty()) {
+            plugin.getLogger().warning(
+                    "Discord /mc is locked: configure discord.minecraft-command-role-ids with trusted role IDs.");
+        }
+        guild.upsertCommand(Commands.slash(
+                        "mc-verify", "Create a one-time Minecraft verification code"))
+                .flatMap(ignored -> guild.upsertCommand(
+                        Commands.slash("mc", "Run a Minecraft server command")
+                                .addOption(OptionType.STRING, "command",
+                                        "Minecraft command to run, without the leading slash", true)))
                 .queue(ignored -> {
                     ready = true;
                     plugin.getLogger().log(Level.INFO, "Discord bot is ready for guild {0}.", guildId);
@@ -120,6 +134,10 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
 
     @Override
     public void onSlashCommandInteraction(@Nonnull SlashCommandInteractionEvent event) {
+        if (event.getName().equals("mc")) {
+            handleMinecraftCommand(event);
+            return;
+        }
         if (!event.getName().equals("mc-verify")) {
             return;
         }
@@ -158,6 +176,71 @@ final class DiscordAuthService extends ListenerAdapter implements AutoCloseable 
                             .queue();
                 }), error -> plugin.getLogger().log(Level.WARNING,
                 "Could not acknowledge the Discord verification command.", error));
+    }
+
+    private void handleMinecraftCommand(SlashCommandInteractionEvent event) {
+        Guild eventGuild = event.getGuild();
+        if (eventGuild == null || !eventGuild.getId().equals(guildId)) {
+            replyEphemerally(event, "Use this command in the configured community server.");
+            return;
+        }
+
+        Member member = event.getMember();
+        if (member == null || minecraftCommandRoleIds.isEmpty()
+                || member.getRoles().stream().noneMatch(role -> minecraftCommandRoleIds.contains(role.getId()))) {
+            replyEphemerally(event, "You do not have a role allowed to run Minecraft commands.");
+            return;
+        }
+
+        var commandOption = event.getOption("command");
+        String command = commandOption == null ? "" : commandOption.getAsString().strip();
+        if (command.startsWith("/")) {
+            command = command.substring(1).stripLeading();
+        }
+        if (command.isBlank() || command.length() > 256
+                || command.indexOf('\n') >= 0 || command.indexOf('\r') >= 0 || command.indexOf('\0') >= 0) {
+            replyEphemerally(event, "Enter one Minecraft command, up to 256 characters, without line breaks.");
+            return;
+        }
+
+        String finalCommand = command;
+        String discordName = member.getEffectiveName().replaceAll("[\\r\\n\\t]", " ");
+        event.deferReply(true).queue(hook -> {
+            try {
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (!plugin.isEnabled()) {
+                        hook.editOriginal("The Minecraft plugin is shutting down; the command was not run.").queue();
+                        return;
+                    }
+
+                    boolean handled;
+                    try {
+                        handled = plugin.getServer().dispatchCommand(
+                                plugin.getServer().getConsoleSender(), finalCommand);
+                    } catch (RuntimeException exception) {
+                        plugin.getLogger().log(Level.SEVERE,
+                                "Minecraft command from Discord failed: /" + finalCommand, exception);
+                        hook.editOriginal("The Minecraft command failed. Check the server console for details.").queue();
+                        return;
+                    }
+                    if (!handled) {
+                        hook.editOriginal("Minecraft did not recognize that command; nothing was announced in game.").queue();
+                        return;
+                    }
+
+                    plugin.getServer().broadcast(net.kyori.adventure.text.Component.text(
+                            "[" + discordName + "]: /" + finalCommand));
+                    plugin.getLogger().info("Discord user " + discordName
+                            + " ran Minecraft command: /" + finalCommand);
+                    hook.editOriginal("Ran `" + finalCommand + "` on the Minecraft server.").queue();
+                });
+            } catch (RuntimeException exception) {
+                plugin.getLogger().log(Level.WARNING,
+                        "Could not schedule a Minecraft command requested through Discord.", exception);
+                hook.editOriginal("The Minecraft server could not schedule that command.").queue();
+            }
+        }, error -> plugin.getLogger().log(Level.WARNING,
+                "Could not acknowledge a Discord Minecraft command.", error));
     }
 
     @Override

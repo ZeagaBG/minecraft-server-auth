@@ -10,7 +10,7 @@ updates:
 
 discord:
   # Create an application/bot in the Discord Developer Portal and invite it to your guild.
-  guild-id: ""
+  guild-id: "1543636647739007016"
   # The bot token is read from this environment variable and is never stored in this file.
   token-environment-variable: COMMUNITY_AUTH_DISCORD_TOKEN
   eligibility:
@@ -20,6 +20,9 @@ discord:
     required-any-role-ids: []
     # A member must have every listed role.
     required-all-role-ids: []
+  # Members with at least one of these roles can run /mc commands as the server console.
+  # Keep this list limited to trusted staff. An empty list denies everyone.
+  minecraft-command-role-ids: []
 
 verification:
   code-lifetime-seconds: 300
